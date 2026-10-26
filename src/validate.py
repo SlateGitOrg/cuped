@@ -1,6 +1,6 @@
 """The pre-treatment validation gate.
 
-THE DIFFERENTIATOR LIVES HERE.
+This module is the core of the library.
 
 CUPED is unbiased only if the covariate is causally upstream of the assignment.
 Use one measured after randomisation and the adjustment subtracts off part of

@@ -1,180 +1,158 @@
 # cuped
 
-> CUPED variance reduction with a gate that rejects post-treatment covariates - the mistake that silently biases the whole method.
+CUPED variance reduction for A/B tests, with a gate that rejects post-treatment covariates, the mistake that silently biases the whole method.
 
-`COMPACT` · **Marketing Analyst** · Intermediate · ~4-5 days · Energy - retail tariff switching experiments
+[![ci](https://github.com/SlateGitOrg/cuped/actions/workflows/ci.yml/badge.svg)](https://github.com/SlateGitOrg/cuped/actions/workflows/ci.yml)
 
-**Primary language:** Python
-**Tags:** `experimentation`, `variance-reduction`, `cuped`, `causal-inference`, `statistics`
+## Why
 
----
+Experiments on revenue-type metrics need very large samples, because a handful of high-value customers dominate the variance. A test that would take eleven weeks to reach adequate power usually gets called early and wrong instead. CUPED removes the part of the variance that pre-experiment behaviour already explains, but it is only valid if the covariate really was measured before randomisation. Use one measured afterwards and the estimate becomes biased while the interval gets tighter, so the error looks like an improvement. This library refuses to run without a declared pre-period window and checks the data itself for the bias case.
 
-## The problem
+## Features
 
-Experiments on revenue-type metrics need enormous samples because a handful of high-value customers dominate the variance. A test that would take eleven weeks to reach adequate power usually gets called early and wrong instead, because eleven weeks is not a timeline anyone will accept.
+- CUPED estimator with automatic, pooled theta estimation and variance-reduction reporting.
+- Pre-treatment validation gate: declared window check plus a balance test across arms, which catches covariates that were declared as pre-period but are not.
+- Covariate ranking by achieved variance reduction. The gate runs first, and rejected candidates stay in the output with their reasons.
+- Readout comparing the naive and CUPED intervals, with the saving expressed as sample size.
+- Recorded override (`override_gate=True`) for cases the automated checks cannot clear. It is flagged on the readout.
+- Synthetic experiment generator with heavy-tailed revenue, a known true effect, and both valid and deliberately invalid covariates.
+- Standard library only. Nothing to install.
 
-## ⭐ The differentiator
+## Architecture
 
-Implements **CUPED with pre-period covariates and a rigorous pre-treatment validation gate**. The single mistake that silently invalidates the method is using a covariate measured *after* randomisation - which biases the estimate while *appearing* to improve precision, so it looks like success. The library refuses to run without a declared pre-period window and tests the bias case explicitly. A generic implementation accepts a covariate column on faith.
-
-This is the sentence to lead with when someone asks you to walk through the
-project. Everything else in this repo exists to make it true and to prove it.
-
-## Data
-
-A synthetic experiment generator with heavy-tailed revenue metrics, known true effects, and **both valid and deliberately invalid (post-treatment) covariates** so the gate itself can be tested.
-
-> No paid API key is required to run or demo this project. Where a paid
-> service would add value it is wired as an optional enhancement behind an
-> interface with an offline mock as the default implementation.
-
-## Stack
-
-- Python: NumPy, SciPy
-- Typer CLI plus a worked notebook
-- pytest
-
-## Core capabilities
-
-- CUPED estimator with automatic theta estimation and variance-reduction reporting
-- Pre-treatment validation gate rejecting post-randomisation covariates
-- Covariate selection ranked by achieved variance reduction
-- Winsorisation and trimming options with their bias implications stated, not hidden
-- Readout report comparing naive against CUPED intervals and the equivalent sample-size saving
-
-## Repository layout
-
-```
-src/cuped/
-src/validate/
-generator/
-test/bias/
-notebooks/
+```mermaid
+flowchart LR
+  G["generator.py<br/>synthetic experiment"] --> E["Experiment<br/>users, arms, true effect"]
+  D["CovariateDeclaration<br/>measurement window"] --> V["validate.py<br/>gate"]
+  E --> V
+  V -->|passed| C["cuped.py<br/>estimate()"]
+  V -->|rejected| X["GateRejection"]
+  V -->|override recorded| C
+  E --> C
+  C --> R["Readout<br/>naive vs CUPED, theta,<br/>variance removed"]
+  E --> K["ranking.py<br/>rank()"]
+  V --> K
+  K --> L["ranked candidates<br/>rejected ones retained"]
 ```
 
-## Build plan
+`estimate()` is the only public entry point to the estimator and it runs the gate first. The gate combines a declaration check (the measurement window must close at or before randomisation and fit inside the pre-period) with an empirical balance check. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
-1. Estimator first on clean data, then verify unbiasedness across many simulations.
-2. Build the gate and the invalid covariate that should trip it. The gate is the differentiator.
-3. Covariate ranking, then the readout report.
-4. Notebook last - it is the teaching artefact.
+## Quick start
 
-## Testing strategy
+Requires Python 3.11 or newer. There are no third-party dependencies.
 
-Assert **unbiasedness under valid covariates across 1,000 simulations**. Then assert the gate **rejects the planted post-treatment covariate** that would otherwise produce a confidently biased result - without that second test the gate is decoration.
+```bash
+git clone https://github.com/SlateGitOrg/cuped.git
+cd cuped
+python -m unittest discover -s tests -v   # run the suite (about 15 s)
+python -m src.demo                        # run the end-to-end demo
+```
 
-Tests assert **correctness**, not merely that the code runs. A green suite on
-this repo is a claim about behaviour under adversarial conditions; treat any
-test that would pass against a deliberately broken implementation as a bug in
-the test.
+## Usage
 
-## Quality & safety layer
+```python
+from src.generator import generate
+from src.cuped import estimate, GateRejection
+from src.validate import CovariateDeclaration
 
-The gate is mandatory and cannot be bypassed silently; an override requires an explicit flag that is recorded in the readout.
+exp = generate(n_users=30_000, true_effect=1.80, seed=5)
 
-## Measurable outcome
+decl = CovariateDeclaration(
+    covariate="pre_revenue",
+    measurement_window_start_days_before_randomisation=28,
+    measurement_window_end_days_before_randomisation=0,
+    rationale="billed revenue in the 28 days before assignment",
+)
+r = estimate(exp, decl)
+print(f"naive {r.naive.effect:.3f}  cuped {r.cuped.effect:.3f}  variance removed {r.variance_reduction:.1%}")
+# naive 1.942  cuped 1.754  variance removed 38.7%
 
-> A 43% variance reduction - eleven weeks of test time cut to six - alongside the rejected-covariate case showing what the gate prevents.
+try:
+    estimate(exp, CovariateDeclaration("post_engagement", 28, 0))
+except GateRejection as e:
+    print(e.gate.passed, e.gate.checks[-1], f"SMD {e.gate.balance_smd:+.3f}")
+# False ('balanced_across_arms', False) SMD +0.480
+```
 
-State it in these terms — business units, not technical ones — in your CV
-bullet and in the first thirty seconds of describing the project.
+### Measured results
 
-## Measured results
-
-From `python -m src.demo` (30,000 customers, seeded and reproducible; true
-effect planted at GBP 1.80 per customer).
+From `python -m src.demo` (30,000 customers, seeded and reproducible; true effect planted at 1.80 per customer).
 
 | estimator | effect | 95% interval | width |
 | --- | --- | --- | --- |
 | naive | 1.942 | [+1.518, +2.366] | 0.848 |
 | CUPED (`pre_revenue`) | 1.754 | [+1.422, +2.086] | 0.664 |
 
-Correlation 0.622, **38.7% of variance removed**. Required sample scales with
-variance, so that is 38.7% less sample — an 11-week test becomes a 7-week one.
+Correlation is 0.622 and 38.7% of the variance is removed. Required sample scales with variance, so that is 38.7% less sample: an 11-week test becomes a 7-week one.
 
 ### What the gate prevents
 
-The same analysis run with `post_engagement`, measured *during* the test window
-and moved by the treatment — declared with an identical 28-day pre-period
-window, so the metadata check sees nothing wrong:
+The same analysis run with `post_engagement`, which is measured during the test window and moved by the treatment. It is declared with an identical 28-day pre-period window, so the metadata check sees nothing wrong:
 
 | | `pre_revenue` (valid) | `post_engagement` (invalid) |
 | --- | --- | --- |
 | correlation | 0.622 | 0.976 |
 | variance removed | 38.7% | 98.3% |
 | interval width | 0.664 | **0.112** |
-| estimated effect | 1.754 | **−6.601** |
+| estimated effect | 1.754 | **-6.601** |
 | true effect | 1.800 | 1.800 |
 
-The invalid covariate wins on every diagnostic an analyst actually looks at —
-higher correlation, more variance removed, an interval six times tighter — and
-returns an effect of the **wrong sign**, in an interval that excludes the truth
-by a wide margin. Nothing in the output indicates a problem. That is why this
-is a gate and not a warning.
+The invalid covariate wins on every diagnostic an analyst normally looks at (higher correlation, more variance removed, an interval six times tighter) and returns an effect of the wrong sign, in an interval that excludes the truth. Nothing in the output indicates a problem, which is why this is a gate and not a warning. The balance test catches it: `SMD +0.480, z +41.6`.
 
-The balance test catches it: `SMD +0.480, z +41.6`. Randomisation makes that
-impossible for anything measured before assignment.
+## How it works
 
-### Limits of the gate, stated plainly
+CUPED adjusts the outcome `Y` using a pre-period covariate `X`:
 
-- **It detects post-treatment covariates that the treatment *moves*.** One
-  measured after randomisation but genuinely unaffected by the treatment will
-  pass — and is still unsafe, since it can be a collider on a path between
-  assignment and outcome. No quantity of data reveals that case; only the
-  declaration and the judgement behind it.
-- **The balance test is a hypothesis test, so it is wrong sometimes.** Measured
-  false-positive rate on a valid covariate is **0.2%** (1 in 500 at n=20,000),
-  against a nominal α of 0.001. That rate is asserted by a test, and it is why
-  `override_gate` exists as a recorded, first-class part of the API rather than
-  an afterthought — a gate that cries wolf gets overridden out of habit.
-- **The balance check requires both significance and a material SMD (≥0.02).**
-  A p-value-only gate rejects valid covariates more and more often as the
-  sample grows, since it gains power to detect imbalance of no consequence — a
-  gate that gets worse with more data is not a gate.
-
-## Interview questions this project answers
-
-- **How does CUPED reduce variance without biasing the estimate?**
-- **What happens if your covariate is measured after randomisation?**
-- **When does CUPED not help?**
-
-## What this deliberately is *not*
-
-- Not an experimentation platform. One estimator, done correctly.
-
-
-## Run it now
-
-```bash
-python -m unittest discover -s tests -v   # the suite
-python -m src.demo                        # the 60-second artefact
+```
+Y_adjusted = Y - theta * (X - mean(X)),   theta = cov(X, Y) / var(X)
 ```
 
-Requires Python 3.11+. The runnable core uses **only the standard
-library** (including `sqlite3`), so there is nothing to install.
+The adjusted outcome has the same expectation as `Y` but variance reduced by a factor of `1 - corr(X, Y)^2`. The effect is then the ordinary difference in adjusted means.
 
-## Getting started
+- **Pooled theta.** Theta is estimated across both arms. Per-arm estimation lets the adjustment absorb part of the treatment effect and biases the estimate toward zero.
+- **Five gate checks.** The covariate exists, is not the outcome, has a declared window that closes before randomisation, fits inside the available pre-period, and is balanced across arms.
+- **Balance needs significance and magnitude.** The gate rejects only when p < 0.001 and the standardised mean difference is at least 0.02. A p-value-only gate rejects valid covariates more often as the sample grows, since it gains power to detect imbalance of no consequence.
+- **Ranking gates before sorting.** On raw variance reduction the rejected covariate comes first, so a ranking that skipped the gate would recommend the mistake.
+
+## Testing
 
 ```bash
-git clone <your-fork-url> cuped
-cd cuped
-pip install -e .
-python -m generator --users 200000
-cuped run --metric revenue --covariate pre_revenue --pre-window 28d
-pytest test/bias              # incl. the rejected covariate case
+python -m unittest discover -s tests -v
 ```
 
-Docker is supported but optional — every path above works on a plain
-Windows/macOS/Linux laptop without a cloud account.
+31 tests in `tests/test_bias.py` assert behaviour rather than just execution:
 
-## Definition of done
+- unbiasedness of the CUPED estimate across many simulations with a valid covariate, and no manufactured effect when the true effect is zero;
+- the planted post-treatment covariate is rejected, both when the declaration is honest and when it is misdeclared, and `estimate()` raises rather than warns;
+- the invalid covariate really would have biased the estimate, excluded the truth and looked better on every diagnostic;
+- variance reduction tracks the squared correlation, and a useless covariate removes almost nothing;
+- pooled theta, covariate ranking behaviour, and numerical edge cases (tiny samples, constant covariates);
+- the gate's false-positive rate on valid covariates is measured at 0.2% (1 in 500 at n=20,000) against a nominal alpha of 0.001.
 
-- [ ] The differentiator above is implemented, and a test proves it
-- [ ] The measurable outcome is produced by a command anyone can run
-- [ ] `README` explains the one decision a generic version gets wrong
-- [ ] CI runs the full suite on every push and is green on `main`
-- [ ] A recruiter can see the headline artefact in under 60 seconds
+CI runs the same command on every push.
 
-## Licence
+## Project layout
+
+```
+src/
+  cuped.py       estimator, Readout, GateRejection
+  validate.py    CovariateDeclaration and the pre-treatment gate
+  ranking.py     covariate ranking (gate first)
+  generator.py   synthetic experiment with planted truth
+  demo.py        end-to-end demo (python -m src.demo)
+tests/
+  test_bias.py   unbiasedness, gate and ranking tests
+docs/
+  ARCHITECTURE.md
+```
+
+## Limitations
+
+- The gate detects post-treatment covariates that the treatment moves. A covariate measured after randomisation but genuinely unaffected by the treatment will pass, and is still unsafe because it can be a collider on a path between assignment and outcome. No quantity of data reveals that case; only the declaration and the judgement behind it do.
+- The balance test is a hypothesis test, so it is occasionally wrong (0.2% false positives measured). That is why `override_gate` exists as a recorded part of the API.
+- One estimator for a two-arm difference in means. Not an experimentation platform: no assignment, metric store or sequential testing.
+- The demo runs on synthetic data.
+
+## License
 
 MIT — see [LICENSE](LICENSE).

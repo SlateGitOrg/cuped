@@ -65,7 +65,7 @@ print(f'\n    Required sample scales with variance, so removing '
       f'{good.variance_reduction:.0%} of it')
 print(f'    removes {good.variance_reduction:.0%} of the sample: an '
       f'{WEEKS}-week test becomes a {saved:.0f}-week one.')
-print('    That is the number to quote - nobody schedules around a variance.\n')
+print('    Sample size, not variance, is what a team schedules around.\n')
 
 # --- the trap --------------------------------------------------------------
 print('  THE MISTAKE THE GATE EXISTS TO STOP')

@@ -1,6 +1,6 @@
 """CUPED, and the gate that decides whether CUPED is allowed to run.
 
-THE DIFFERENTIATOR LIVES IN `validate.py`. This module is the estimator it
+THE GATE LIVES IN `validate.py`. This module is the estimator it
 guards, and is written so that the guard cannot be skipped by accident: the
 only public entry point is `estimate()`, which requires a `CovariateDeclaration`
 and refuses to proceed if the declaration does not clear the gate.

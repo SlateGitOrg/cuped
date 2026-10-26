@@ -51,7 +51,7 @@ TENURE = CovariateDeclaration(
 
 
 class TestTheGate(unittest.TestCase):
-    """The differentiator."""
+    """The gate rejects post-treatment covariates."""
 
     def test_the_honest_mistake_is_caught_by_the_declaration(self):
         exp = generate(n_users=4_000)
